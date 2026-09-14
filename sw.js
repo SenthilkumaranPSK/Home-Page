@@ -1,0 +1,60 @@
+/* SK Home — service worker.
+   Cache-first for the shell so the page opens with no network at all.
+   Bump CACHE when you change any shell file (or just hard-reload once). */
+
+const CACHE = "sk-home-v1";
+
+const SHELL = [
+  "./",
+  "./index.html",
+  "./styles.css",
+  "./config.js",
+  "./app.js",
+  "./manifest.webmanifest",
+  "./assets/favicon.svg",
+  "./assets/icon-192.png",
+  "./assets/icon-512.png"
+];
+
+self.addEventListener("install", (e) => {
+  e.waitUntil(
+    caches.open(CACHE)
+      .then((c) => c.addAll(SHELL))
+      .then(() => self.skipWaiting())
+      .catch(() => self.skipWaiting())
+  );
+});
+
+self.addEventListener("activate", (e) => {
+  e.waitUntil(
+    caches.keys()
+      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then(() => self.clients.claim())
+  );
+});
+
+self.addEventListener("fetch", (e) => {
+  const req = e.request;
+  if (req.method !== "GET") return;
+
+  const url = new URL(req.url);
+
+  // Never cache the weather API — always live, and failure is handled in app.js.
+  if (url.origin !== self.location.origin) return;
+
+  // Shell: cache first, then refresh in the background.
+  e.respondWith(
+    caches.match(req).then((hit) => {
+      const live = fetch(req)
+        .then((res) => {
+          if (res && res.ok) {
+            const copy = res.clone();
+            caches.open(CACHE).then((c) => c.put(req, copy));
+          }
+          return res;
+        })
+        .catch(() => hit);
+      return hit || live;
+    })
+  );
+});

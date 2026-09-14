@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en" data-page="ext">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SK</title>
+<meta name="theme-color" content="#0b0714">
+<meta name="description" content="Personal start page.">
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="config.js" as="script">
+<link rel="preload" href="app.js" as="script">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="bg-aurora" aria-hidden="true"></div>
+<div class="bg-stars" aria-hidden="true"></div>
+
+<main class="shell">
+
+  <!-- ── Header: greeting + clock ─────────────────────────────────── -->
+  <header class="hero">
+    <div class="hero-main">
+      <h1 class="greeting" id="greeting">&nbsp;</h1>
+      <p class="subline" id="subline">&nbsp;</p>
+    </div>
+    <div class="hero-side">
+      <div class="clock" id="clock">&nbsp;</div>
+      <div class="datestr" id="datestr">&nbsp;</div>
+      <div class="weather" id="weather" hidden>
+        <span class="weather-icon" id="weather-icon"></span>
+        <span class="weather-temp" id="weather-temp"></span>
+        <span class="weather-meta" id="weather-meta"></span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ── Search ───────────────────────────────────────────────────── -->
+  <form class="search" id="search-form" autocomplete="off" role="search">
+    <svg class="search-glyph" viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path>
+    </svg>
+    <input
+      class="search-input"
+      id="search-input"
+      type="text"
+      spellcheck="false"
+      autocapitalize="off"
+      autocorrect="off"
+      aria-label="Search the web"
+      placeholder="Search — or press Tab to switch engine">
+    <button class="engine-pill" id="engine-pill" type="button" aria-label="Change search engine">Google</button>
+  </form>
+  <p class="search-hint" id="search-hint"></p>
+
+  <!-- ── Link groups ──────────────────────────────────────────────── -->
+  <section class="groups" id="groups"></section>
+
+  <!-- ── Notes + todo ─────────────────────────────────────────────── -->
+  <section class="panels" id="panels" hidden>
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Todo</h2>
+        <span class="panel-count" id="todo-count"></span>
+      </div>
+      <form id="todo-form" autocomplete="off">
+        <input class="todo-input" id="todo-input" type="text" placeholder="Add a task…" aria-label="Add a task">
+      </form>
+      <ul class="todo-list" id="todo-list"></ul>
+    </div>
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Notes</h2>
+        <span class="panel-count" id="notes-status"></span>
+      </div>
+      <textarea class="notes" id="notes" placeholder="Scratchpad — saved automatically, stays on this device." aria-label="Notes"></textarea>
+    </div>
+  </section>
+
+  <footer class="foot">
+    <span><kbd>Ctrl</kbd><kbd>K</kbd> palette</span>
+    <span><kbd>/</kbd> search</span>
+    <span><kbd>1</kbd>–<kbd>9</kbd> jump</span>
+    <span id="foot-keys"></span>
+  </footer>
+
+</main>
+
+<!-- ── Command palette ───────────────────────────────────────────── -->
+<div class="palette-wrap" id="palette-wrap" hidden>
+  <div class="palette-backdrop" id="palette-backdrop"></div>
+  <div class="palette" role="dialog" aria-modal="true" aria-label="Command palette">
+    <input class="palette-input" id="palette-input" type="text" spellcheck="false"
+           autocomplete="off" placeholder="Jump to…" aria-label="Jump to">
+    <ul class="palette-list" id="palette-list"></ul>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
