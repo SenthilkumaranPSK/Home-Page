@@ -2,13 +2,15 @@
    Cache-first for the shell so the page opens with no network at all.
    Bump CACHE when you change any shell file (or just hard-reload once). */
 
-const CACHE = "sk-home-v1";
+const CACHE = "sk-home-v2";
 
 const SHELL = [
   "./",
   "./index.html",
   "./styles.css",
   "./config.js",
+  "./cosmos.js",
+  "./live.js",
   "./app.js",
   "./manifest.webmanifest",
   "./assets/favicon.svg",

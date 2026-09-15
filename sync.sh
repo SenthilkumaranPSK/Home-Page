@@ -15,7 +15,7 @@ sed -e '/manifest\.webmanifest/d' \
     -e 's/data-page="web"/data-page="ext"/' \
     index.html > extension/newtab.html
 
-cp styles.css app.js config.js extension/
+cp styles.css app.js config.js cosmos.js live.js extension/
 cp assets/favicon.svg extension/assets/
 
 echo "Synced -> extension/  (reload it at chrome://extensions)"

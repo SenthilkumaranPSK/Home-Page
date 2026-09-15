@@ -11,80 +11,148 @@
 <link rel="apple-touch-icon" href="assets/icon-192.png">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="preload" href="config.js" as="script">
+<link rel="preload" href="cosmos.js" as="script">
 <link rel="preload" href="app.js" as="script">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 
-<div class="bg-aurora" aria-hidden="true"></div>
-<div class="bg-stars" aria-hidden="true"></div>
+<canvas id="sky" class="sky" aria-hidden="true"></canvas>
+<div class="cursor-glow" id="cursor-glow" aria-hidden="true"></div>
 
-<main class="shell">
+<main class="shell" id="shell">
 
-  <!-- ── Header: greeting + clock ─────────────────────────────────── -->
-  <header class="hero">
+  <!-- ── Hero ─────────────────────────────────────────────────────── -->
+  <header class="hero reveal" data-delay="0">
     <div class="hero-main">
-      <h1 class="greeting" id="greeting">&nbsp;</h1>
-      <p class="subline" id="subline">&nbsp;</p>
+      <h1 class="greeting" id="greeting" aria-live="polite"></h1>
+      <p class="subline" id="subline"></p>
+      <div class="streak" id="streak" hidden></div>
     </div>
+
     <div class="hero-side">
-      <div class="clock" id="clock">&nbsp;</div>
-      <div class="datestr" id="datestr">&nbsp;</div>
-      <div class="weather" id="weather" hidden>
+      <div class="clock" id="clock" aria-label="Current time"></div>
+      <div class="datestr" id="datestr"></div>
+      <button class="weather" id="weather" hidden type="button"
+              aria-label="Weather details" aria-expanded="false">
         <span class="weather-icon" id="weather-icon"></span>
         <span class="weather-temp" id="weather-temp"></span>
-        <span class="weather-meta" id="weather-meta"></span>
-      </div>
+        <span class="weather-label" id="weather-label"></span>
+        <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
     </div>
   </header>
 
+  <!-- ── Weather detail drawer ────────────────────────────────────── -->
+  <section class="wx-drawer" id="wx-drawer" hidden>
+    <div class="wx-stats" id="wx-stats"></div>
+    <div class="wx-chart" id="wx-chart"></div>
+  </section>
+
   <!-- ── Search ───────────────────────────────────────────────────── -->
-  <form class="search" id="search-form" autocomplete="off" role="search">
+  <form class="search reveal" data-delay="1" id="search-form" autocomplete="off" role="search">
     <svg class="search-glyph" viewBox="0 0 24 24" aria-hidden="true">
       <circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path>
     </svg>
-    <input
-      class="search-input"
-      id="search-input"
-      type="text"
-      spellcheck="false"
-      autocapitalize="off"
-      autocorrect="off"
-      aria-label="Search the web"
-      placeholder="Search — or press Tab to switch engine">
-    <button class="engine-pill" id="engine-pill" type="button" aria-label="Change search engine">Google</button>
+    <input class="search-input" id="search-input" type="text" spellcheck="false"
+           autocapitalize="off" autocorrect="off" aria-label="Search the web"
+           placeholder="Search — or press Tab to switch engine">
+    <button class="engine-pill" id="engine-pill" type="button"
+            aria-label="Change search engine"></button>
   </form>
   <p class="search-hint" id="search-hint"></p>
 
-  <!-- ── Link groups ──────────────────────────────────────────────── -->
-  <section class="groups" id="groups"></section>
+  <!-- ── Widget row ───────────────────────────────────────────────── -->
+  <section class="widgets reveal" data-delay="2" id="widgets">
 
-  <!-- ── Notes + todo ─────────────────────────────────────────────── -->
-  <section class="panels" id="panels" hidden>
-    <div class="panel">
-      <div class="panel-head">
-        <h2>Todo</h2>
-        <span class="panel-count" id="todo-count"></span>
+    <article class="card focus-card" id="focus-card">
+      <div class="card-head"><h2>Focus</h2><span class="card-meta" id="focus-state">ready</span></div>
+      <div class="focus-body">
+        <div class="ring-wrap">
+          <svg class="ring" viewBox="0 0 120 120" aria-hidden="true">
+            <circle class="ring-bg"  cx="60" cy="60" r="52"/>
+            <circle class="ring-fg"  cx="60" cy="60" r="52" id="ring-fg"/>
+          </svg>
+          <div class="ring-time" id="focus-time">25:00</div>
+        </div>
+        <div class="focus-actions">
+          <button class="btn btn-primary" id="focus-toggle" type="button">Start</button>
+          <button class="btn" id="focus-reset" type="button">Reset</button>
+          <span class="focus-count" id="focus-count"></span>
+        </div>
       </div>
-      <form id="todo-form" autocomplete="off">
-        <input class="todo-input" id="todo-input" type="text" placeholder="Add a task…" aria-label="Add a task">
-      </form>
-      <ul class="todo-list" id="todo-list"></ul>
-    </div>
-    <div class="panel">
-      <div class="panel-head">
-        <h2>Notes</h2>
-        <span class="panel-count" id="notes-status"></span>
+    </article>
+
+    <article class="card" id="countdown-card" hidden>
+      <div class="card-head"><h2 id="countdown-label">Countdown</h2><span class="card-meta" id="countdown-date"></span></div>
+      <div class="countdown-body">
+        <div class="cd-num" id="cd-days">—</div>
+        <div class="cd-unit">days left</div>
+        <div class="cd-bar"><span id="cd-fill"></span></div>
+        <div class="cd-sub" id="cd-sub"></div>
       </div>
-      <textarea class="notes" id="notes" placeholder="Scratchpad — saved automatically, stays on this device." aria-label="Notes"></textarea>
-    </div>
+    </article>
+
+    <article class="card gh-card" id="gh-card" hidden>
+      <div class="card-head">
+        <h2>GitHub</h2>
+        <span class="card-meta" id="gh-meta"></span>
+      </div>
+      <div class="gh-stats" id="gh-stats"></div>
+      <div class="gh-grid" id="gh-grid" aria-label="Activity over the last 90 days"></div>
+      <ul class="gh-recent" id="gh-recent"></ul>
+    </article>
+
   </section>
 
-  <footer class="foot">
+  <!-- ── Link groups ──────────────────────────────────────────────── -->
+  <section class="groups reveal" data-delay="3" id="groups"></section>
+
+  <!-- ── Panels ───────────────────────────────────────────────────── -->
+  <section class="panels reveal" data-delay="4" id="panels">
+
+    <article class="card">
+      <div class="card-head">
+        <h2>Todo</h2>
+        <span class="card-meta" id="todo-count"></span>
+      </div>
+      <form id="todo-form" autocomplete="off">
+        <input class="field" id="todo-input" type="text"
+               placeholder="Add a task — try “call ravi 4pm !”" aria-label="Add a task">
+      </form>
+      <p class="parse-hint" id="parse-hint"></p>
+      <ul class="todo-list" id="todo-list"></ul>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h2>Notes</h2>
+        <span class="card-meta" id="notes-status"></span>
+      </div>
+      <textarea class="notes" id="notes"
+                placeholder="Scratchpad — saved automatically, stays on this device."
+                aria-label="Notes"></textarea>
+    </article>
+
+    <article class="card feed-card" id="hn-card" hidden>
+      <div class="card-head"><h2>Hacker News</h2><span class="card-meta">front page</span></div>
+      <ul class="feed" id="hn-list"></ul>
+    </article>
+
+    <article class="card" id="market-card" hidden>
+      <div class="card-head"><h2>Markets</h2><span class="card-meta" id="market-meta"></span></div>
+      <ul class="market" id="market-list"></ul>
+    </article>
+
+  </section>
+
+  <footer class="foot reveal" data-delay="5">
     <span><kbd>Ctrl</kbd><kbd>K</kbd> palette</span>
     <span><kbd>/</kbd> search</span>
     <span><kbd>1</kbd>–<kbd>9</kbd> jump</span>
-    <span id="foot-keys"></span>
+    <span><kbd>Alt</kbd> shortcuts</span>
+    <span class="foot-drag">drag a tile to rearrange</span>
+    <button class="foot-reset" id="reset-order" type="button" hidden>reset order</button>
   </footer>
 
 </main>
@@ -99,7 +167,11 @@
   </div>
 </div>
 
+<div class="toast" id="toast" hidden></div>
+
 <script src="config.js"></script>
+<script src="cosmos.js"></script>
+<script src="live.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

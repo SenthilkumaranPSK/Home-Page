@@ -11,6 +11,8 @@ powershell -NoProfile -Command ^
 copy /Y "styles.css" "extension\" >nul
 copy /Y "app.js"     "extension\" >nul
 copy /Y "config.js"  "extension\" >nul
+copy /Y "cosmos.js"  "extension\" >nul
+copy /Y "live.js"    "extension\" >nul
 copy /Y "assets\favicon.svg" "extension\assets\" >nul
 
 echo Synced -^> extension\  (reload it at chrome://extensions)
