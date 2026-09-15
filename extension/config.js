@@ -37,6 +37,18 @@ const CONFIG = {
 
   feeds: {
     hackernews: true,              // front page, refreshed every 20 min
+    devto:      true,              // dev.to's own front page, refreshed every 20 min
+    onThisDay:  true,               // a Wikipedia "on this day" fact, folded into the subline
+  },
+
+  /* ---- Search suggestions -----------------------------------------------
+     Absolute URL to the /api/suggest proxy this project ships (see
+     api/suggest.js) — needed because the Chrome extension and file://
+     testing have no /api/ route, so a relative path would 404 there.
+     Point it at your own Vercel deployment once you've pushed one, or set
+     to null to disable suggestions entirely.                              */
+  search: {
+    suggestEndpoint: "https://hey-sk.vercel.app/api/suggest",
   },
 
   /* ---- Countdown ------------------------------------------------------
@@ -164,6 +176,7 @@ const CONFIG = {
     use24Hour:         false,
     autofocusSearch:   true,
     openLinksInNewTab: false,
+    focusChime:        true,   // soft sound when a focus/break session ends
 
     /* Motion. All of this is skipped automatically if your OS is set to
        "reduce motion" — these switches are for when you just want calm.  */

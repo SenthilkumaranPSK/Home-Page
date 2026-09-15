@@ -162,6 +162,7 @@
   }
 
   var streak = bumpStreak();
+  var otdFact = null, lastWx = null;
 
   var greetEl = $("greeting"), lastGreet = "";
 
@@ -205,6 +206,15 @@
       return "Rain in " + (C.location.label || "town") + " — good day to stay in and ship.";
     if (wx && /thunder/i.test(wx.label))
       return "Storm outside. Back up your work.";
+
+    // Checked before the streak line below — the streak count is already
+    // shown separately in the #streak badge next to the greeting whenever
+    // it's >1, so nothing is actually lost by letting the fact win here.
+    // (Putting it after streak.count>=3 would make it permanently
+    // unreachable for anyone using this as a daily home page — a 3-day
+    // streak, once hit, never drops back below 3.)
+    if (otdFact) return otdFact;
+
     if (streak.count >= 3)
       return streak.count + " days in a row. Keep the chain alive.";
     if (day === 1 && h < 12) return "Fresh week. Pick the hard thing first.";
@@ -615,26 +625,375 @@
     return { engine: ENGINES[engineIdx], query: raw.trim(), prefixed: false };
   }
 
+  /* ---- quick add — "todo buy milk" / "note idea for project" go straight
+     into the Todo/Notes cards below instead of searching. Checked first,
+     since neither word can ever be mistaken for a calculator/URL/search. */
+  function parseQuickAdd(raw) {
+    var m = raw.match(/^(todo|note)\s+(.+)$/i);
+    return m ? { kind: m[1].toLowerCase(), text: m[2].trim() } : null;
+  }
+
+  /* ---- inline calculator ----------------------------------------------
+     Whitespace is REQUIRED around every operator ("10 - 5", not "10-5")
+     so a plain search like "2024-2025" or a phone-like "12-34-56" never
+     gets swallowed as arithmetic — Enter intercepts navigation entirely
+     for a recognized expression, so a false match would eat a real search. */
+  var CALC_RE = /^\d+(\.\d+)?(\s+[+\-*/%]\s+\d+(\.\d+)?)+$/;
+
+  function evalCalc(expr) {
+    // No parens / unary minus here — CALC_RE never admits them (it can't,
+    // without reopening the "2024-2025 looks like subtraction" false-positive
+    // problem), so a recursive-descent branch for them would be unreachable.
+    var i = 0;
+    function skip() { while (expr[i] === " ") i++; }
+    function num() {
+      skip();
+      var start = i;
+      while (i < expr.length && /[\d.]/.test(expr[i])) i++;
+      return start === i ? null : parseFloat(expr.slice(start, i));
+    }
+    function term() {
+      var v = num();
+      if (v == null) return null;
+      for (;;) {
+        skip();
+        var op = expr[i];
+        if (op !== "*" && op !== "/" && op !== "%") break;
+        i++;
+        var rhs = num();
+        if (rhs == null) return null;
+        if (op === "*") v *= rhs;
+        else { if (rhs === 0) return null; v = op === "/" ? v / rhs : v % rhs; }
+      }
+      return v;
+    }
+    function expression() {
+      var v = term();
+      if (v == null) return null;
+      for (;;) {
+        skip();
+        var op = expr[i];
+        if (op !== "+" && op !== "-") break;
+        i++;
+        var rhs = term();
+        if (rhs == null) return null;
+        v = op === "+" ? v + rhs : v - rhs;
+      }
+      return v;
+    }
+    var result = expression();
+    skip();
+    return (i === expr.length && result != null && isFinite(result)) ? result : null;
+  }
+
+  function trimNum(n) { return String(Math.round(n * 1e6) / 1e6); }
+
+  /* ---- inline unit / currency converter --------------------------------
+     The regex shape is deliberately loose; the *lookup* against these
+     tables is what's strict, so a plain 3-word search like "10 people in
+     office" just falls through to a normal search instead of erroring. */
+  var UNITS = {
+    length: { m: 1, meter: 1, meters: 1, km: 1000, kilometer: 1000, kilometers: 1000,
+              cm: .01, centimeter: .01, centimeters: .01, mm: .001, millimeter: .001,
+              mi: 1609.344, mile: 1609.344, miles: 1609.344,
+              ft: .3048, foot: .3048, feet: .3048, in: .0254, inch: .0254, inches: .0254,
+              yd: .9144, yard: .9144, yards: .9144 },
+    weight: { kg: 1, kilogram: 1, kilograms: 1, g: .001, gram: .001, grams: .001,
+              lb: .453592, lbs: .453592, pound: .453592, pounds: .453592,
+              oz: .0283495, ounce: .0283495, ounces: .0283495 },
+    volume: { l: 1, liter: 1, liters: 1, litre: 1, litres: 1, ml: .001, milliliter: .001,
+              gal: 3.78541, gallon: 3.78541, gallons: 3.78541 }
+  };
+  var TEMP_UNITS = ["c", "celsius", "f", "fahrenheit", "k", "kelvin"];
+  /* Matches exactly what api.frankfurter.dev supports — gating against a real
+     list (not just "any two 3-letter words") avoids treating things like
+     "5 min to fix" or "2 job to day" as a currency pair, which would
+     otherwise get stuck showing "converting…" forever (the lookup fails,
+     so nothing ever replaces that hint). */
+  var CURRENCIES = ["aud","brl","cad","chf","cny","czk","dkk","eur","gbp","hkd",
+    "huf","idr","ils","inr","isk","jpy","krw","mxn","myr","nok","nzd","php",
+    "pln","ron","sek","sgd","thb","try","usd","zar"];
+
+  function convertTemp(v, from, to) {
+    var c;
+    if (from === "c" || from === "celsius") c = v;
+    else if (from === "f" || from === "fahrenheit") c = (v - 32) * 5 / 9;
+    else if (from === "k" || from === "kelvin") c = v - 273.15;
+    else return null;
+    if (to === "c" || to === "celsius") return c;
+    if (to === "f" || to === "fahrenheit") return c * 9 / 5 + 32;
+    if (to === "k" || to === "kelvin") return c + 273.15;
+    return null;
+  }
+
+  function findUnit(token) {
+    for (var cat in UNITS) if (UNITS[cat].hasOwnProperty(token)) return { cat: cat, factor: UNITS[cat][token] };
+    return null;
+  }
+
+  function parseConvert(raw) {
+    var m = raw.match(/^([\d.]+)\s*([a-z]+)\s+(?:to|in)\s+([a-z]+)$/i);
+    if (!m) return null;
+    var amount = parseFloat(m[1]), from = m[2].toLowerCase(), to = m[3].toLowerCase();
+    if (isNaN(amount)) return null;
+
+    if (TEMP_UNITS.indexOf(from) !== -1 && TEMP_UNITS.indexOf(to) !== -1) {
+      var t = convertTemp(amount, from, to);
+      return t == null ? null : { type: "unit", value: t, unit: to };
+    }
+
+    var fu = findUnit(from), tu = findUnit(to);
+    if (fu && tu && fu.cat === tu.cat)
+      return { type: "unit", value: amount * fu.factor / tu.factor, unit: to };
+
+    if (CURRENCIES.indexOf(from) !== -1 && CURRENCIES.indexOf(to) !== -1)
+      return { type: "currency", amount: amount, from: from, to: to };
+
+    return null;
+  }
+
+  /* ---- inline time-zone converter ---------------------------------------
+     Real IANA zone names via Intl (DST-correct), not a hand-rolled offset
+     table — just a small alias map from common abbreviations.             */
+  var TZ_ALIAS = {
+    ist: "Asia/Kolkata", pst: "America/Los_Angeles", pdt: "America/Los_Angeles",
+    est: "America/New_York", edt: "America/New_York",
+    cst: "America/Chicago", cdt: "America/Chicago",
+    mst: "America/Denver", mdt: "America/Denver",
+    gmt: "UTC", utc: "UTC", bst: "Europe/London", cet: "Europe/Paris", jst: "Asia/Tokyo"
+  };
+
+  function tzOffsetMinutes(date, zone) {
+    var parts = {};
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: zone, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit"
+    }).formatToParts(date).forEach(function (p) { parts[p.type] = p.value; });
+    var asUTC = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
+    return (asUTC - date.getTime()) / 60000;
+  }
+
+  function parseTimeConvert(raw) {
+    var m = raw.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s+([a-z]{2,4})\s+(?:to|in)\s+([a-z]{2,4})$/i);
+    if (!m) return null;
+    var fromZone = TZ_ALIAS[m[4].toLowerCase()], toZone = TZ_ALIAS[m[5].toLowerCase()];
+    if (!fromZone || !toZone) return null;
+
+    var hh = parseInt(m[1], 10), mm = m[2] ? parseInt(m[2], 10) : 0, ap = m[3];
+    if (hh > 23 || mm > 59) return null;
+    if (ap) { ap = ap.toLowerCase(); if (ap === "pm" && hh < 12) hh += 12; if (ap === "am" && hh === 12) hh = 0; }
+
+    var now = new Date();
+    var localAsUTC = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), hh, mm);
+    // Two-pass: fromZone's offset can differ between "now" and the target
+    // time if a DST transition falls in between (rare, but the target date
+    // could be in a different DST period than today) — refine once using
+    // a first approximation of the target instant instead of "now".
+    var approxUTC = new Date(localAsUTC - tzOffsetMinutes(now, fromZone) * 60000);
+    var offFrom = tzOffsetMinutes(approxUTC, fromZone);
+    var actualUTC = new Date(localAsUTC - offFrom * 60000);
+
+    var out = new Intl.DateTimeFormat("en-US", { timeZone: toZone, hour: "numeric", minute: "2-digit" }).format(actualUTC);
+    return { type: "time", value: out };
+  }
+
+  /* ---- suggestions dropdown ---------------------------------------------
+     Modeled on the command palette's list/select pattern (see below).     */
+  var sug = [], sugSel = -1, sugTimer, sugToken = 0;
+  var sugList = $("search-suggest");
+
+  function closeSuggest() {
+    sugToken++; // invalidates any in-flight fetch — see maybeSuggest()
+    clearTimeout(sugTimer);
+    sug = []; sugSel = -1;
+    sugList.hidden = true;
+    sugList.textContent = "";
+  }
+
+  function renderSuggest(items) {
+    sugList.textContent = "";
+    if (!items.length) { sugList.hidden = true; return; }
+    items.forEach(function (text, i) {
+      var li = document.createElement("li");
+      li.className = "suggest-item";
+      li.setAttribute("role", "option");
+      li.setAttribute("aria-selected", "false");
+      li.textContent = text;
+      li.addEventListener("mouseenter", function () { selectSuggest(i); });
+      // mousedown (not click) + preventDefault so this registers before
+      // the input's blur handler would otherwise close the dropdown first.
+      li.addEventListener("mousedown", function (e) {
+        e.preventDefault();
+        input.value = text;
+        closeSuggest();
+        submitSearch();
+      });
+      sugList.appendChild(li);
+    });
+    sugSel = -1;
+    sugList.hidden = false;
+  }
+
+  function selectSuggest(i) {
+    var nodes = sugList.querySelectorAll(".suggest-item");
+    if (!nodes.length) return;
+    sugSel = (i + nodes.length) % nodes.length;
+    for (var n = 0; n < nodes.length; n++)
+      nodes[n].setAttribute("aria-selected", n === sugSel ? "true" : "false");
+    nodes[sugSel].scrollIntoView({ block: "nearest" });
+  }
+
+  function maybeSuggest(raw) {
+    clearTimeout(sugTimer);
+    if (!window.Live || raw.trim().length < 2) { closeSuggest(); return; }
+    var myToken = ++sugToken;
+    sugTimer = setTimeout(function () {
+      window.Live.suggest(raw).then(function (items) {
+        // Both guards matter: input.value catches "user kept typing";
+        // sugToken catches "the dropdown was explicitly closed (blur,
+        // Escape) while this request was still in flight" — without it,
+        // a slow response can silently reopen a dropdown the user just
+        // dismissed, since input.value alone wouldn't have changed.
+        if (input.value !== raw || sugToken !== myToken) return;
+        sug = items;
+        renderSuggest(items);
+      });
+    }, 180);
+  }
+
+  var lastCalcResult = null; // what Enter should copy, if a result is showing
+
   function updateHint() {
     var raw = input.value;
-    if (!raw.trim()) { hint.textContent = ""; return; }
+    lastCalcResult = null;
+
+    if (!raw.trim()) { hint.textContent = ""; closeSuggest(); return; }
+
+    var qa = parseQuickAdd(raw);
+    if (qa) {
+      hint.innerHTML = "↵&nbsp; Add to <b>" + (qa.kind === "todo" ? "Todo" : "Notes") + "</b>";
+      closeSuggest();
+      return;
+    }
+
+    if (CALC_RE.test(raw)) {
+      var calc = evalCalc(raw);
+      if (calc != null) {
+        lastCalcResult = trimNum(calc);
+        hint.innerHTML = "↵&nbsp; = <b>" + lastCalcResult + "</b> &nbsp;·&nbsp; copy";
+        closeSuggest();
+        return;
+      }
+    }
+
+    var conv = parseConvert(raw);
+    if (conv) {
+      closeSuggest();
+      if (conv.type === "unit") {
+        lastCalcResult = trimNum(conv.value) + " " + conv.unit;
+        hint.innerHTML = "↵&nbsp; = <b>" + lastCalcResult + "</b> &nbsp;·&nbsp; copy";
+        return;
+      }
+      var myRaw = raw;
+      hint.innerHTML = "↵&nbsp; converting…";
+      if (window.Live) {
+        window.Live.rate(conv.from, conv.to).then(function (r) {
+          if (input.value !== myRaw) return; // user kept typing — hint has already moved on
+          if (r == null) {
+            // Known currency codes but the lookup still failed (API hiccup) —
+            // fall back to a normal search hint instead of leaving the UI
+            // stuck on "converting…" forever.
+            var p = parse(myRaw);
+            hint.innerHTML = p.prefixed
+              ? "↵&nbsp; Search <b>" + p.engine.name + "</b>"
+              : "↵&nbsp; <b>" + p.engine.name + "</b> &nbsp;·&nbsp; Tab to switch";
+            maybeSuggest(myRaw);
+            return;
+          }
+          lastCalcResult = trimNum(conv.amount * r) + " " + conv.to.toUpperCase();
+          hint.innerHTML = "↵&nbsp; = <b>" + lastCalcResult + "</b> &nbsp;·&nbsp; copy";
+        });
+      }
+      return;
+    }
+
+    var timeConv = parseTimeConvert(raw);
+    if (timeConv) {
+      lastCalcResult = timeConv.value;
+      hint.innerHTML = "↵&nbsp; = <b>" + timeConv.value + "</b> &nbsp;·&nbsp; copy";
+      closeSuggest();
+      return;
+    }
+
     var url = asUrl(raw);
-    if (url) { hint.innerHTML = "↵&nbsp; Go to <b>" + url.replace(/^https?:\/\//, "") + "</b>"; return; }
+    if (url) {
+      hint.innerHTML = "↵&nbsp; Go to <b>" + url.replace(/^https?:\/\//, "") + "</b>";
+      closeSuggest();
+      return;
+    }
+
     var p = parse(raw);
     hint.innerHTML = p.prefixed
       ? "↵&nbsp; Search <b>" + p.engine.name + "</b>"
       : "↵&nbsp; <b>" + p.engine.name + "</b> &nbsp;·&nbsp; Tab to switch";
+
+    maybeSuggest(raw);
   }
 
-  input.addEventListener("input", updateHint);
+  function copyResult(text) {
+    text = String(text);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () {
+        toast("Copied " + text);
+      }).catch(function () { legacyCopy(text); });
+      return;
+    }
+    legacyCopy(text);
+  }
 
-  input.addEventListener("keydown", function (e) {
-    if (e.key === "Tab") { e.preventDefault(); cycleEngine(e.shiftKey ? -1 : 1); }
-    else if (e.key === "Escape") { input.value = ""; updateHint(); input.blur(); }
-  });
+  /* navigator.clipboard needs a secure context — undefined on file:// and
+     plain http://, both of which this project explicitly supports testing
+     from (see README). Without a fallback, Enter on a calculator result
+     would silently do nothing there. */
+  function legacyCopy(text) {
+    var ok = false;
+    try {
+      var ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.focus(); ta.select();
+      ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+    } catch (e) {}
+    toast(ok ? "Copied " + text : text); // show the value either way
+  }
 
-  $("search-form").addEventListener("submit", function (e) {
-    e.preventDefault();
+  function submitSearch() {
+    var qa = parseQuickAdd(input.value.trim());
+    if (qa) {
+      if (qa.kind === "todo") {
+        var p = parseTask(qa.text);
+        todos.push({ text: p.text, when: p.when, bang: p.bang, done: false });
+        saveTodos(); renderTodos();
+        toast("Added to todo");
+      } else {
+        notes.value = (notes.value ? notes.value + "\n" : "") + qa.text;
+        store.set("notes", notes.value);
+        notesStatus.textContent = "saved";
+        setTimeout(function () { notesStatus.textContent = ""; }, 1300);
+        if (previewOn) notesPreview.innerHTML = renderMarkdown(notes.value);
+        toast("Added to notes");
+      }
+      input.value = ""; updateHint();
+      return;
+    }
+
+    if (lastCalcResult != null) {
+      copyResult(lastCalcResult);
+      return;
+    }
     var raw = input.value.trim();
     if (!raw) return;
     var url = asUrl(raw);
@@ -642,6 +1001,34 @@
     var p = parse(raw);
     if (!p.query) return;
     go(p.engine.url.replace("%s", encodeURIComponent(p.query)));
+  }
+
+  input.addEventListener("input", updateHint);
+
+  input.addEventListener("keydown", function (e) {
+    if (e.key === "Tab") { e.preventDefault(); cycleEngine(e.shiftKey ? -1 : 1); }
+    else if (e.key === "ArrowDown") { if (!sugList.hidden && sug.length) { e.preventDefault(); selectSuggest(sugSel + 1); } }
+    else if (e.key === "ArrowUp")   { if (!sugList.hidden && sug.length) { e.preventDefault(); selectSuggest(sugSel - 1); } }
+    else if (e.key === "Enter") {
+      if (!sugList.hidden && sugSel >= 0 && sug[sugSel] != null) {
+        e.preventDefault();
+        input.value = sug[sugSel];
+        closeSuggest();
+        submitSearch();
+      }
+      // else: let the form's own submit event fire normally
+    }
+    else if (e.key === "Escape") {
+      if (!sugList.hidden) closeSuggest();
+      else { input.value = ""; updateHint(); input.blur(); }
+    }
+  });
+
+  input.addEventListener("blur", function () { setTimeout(closeSuggest, 0); });
+
+  $("search-form").addEventListener("submit", function (e) {
+    e.preventDefault();
+    submitSearch();
   });
 
   pill.addEventListener("click", function () { cycleEngine(1); input.focus(); });
@@ -665,6 +1052,76 @@
 
   function total() { return (focus.mode === "focus" ? POM.focusMinutes : POM.breakMinutes) * 60; }
 
+  /* ---- soft chime when a session ends — zero audio files, synthesized
+     with the browser's own AudioContext. ---------------------------------*/
+  function chime() {
+    if (OPT.focusChime === false) return;
+    try {
+      var Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      var ctx = new Ctx();
+      if (ctx.state === "suspended") ctx.resume();
+      var t = ctx.currentTime;
+      [880, 1320].forEach(function (freq, i) {
+        var osc = ctx.createOscillator(), gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0, t);
+        gain.gain.linearRampToValueAtTime(0.15, t + 0.02 + i * 0.08);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t + 1.1 + i * 0.08);
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.start(t + i * 0.08);
+        osc.stop(t + 1.2 + i * 0.08);
+      });
+      setTimeout(function () { ctx.close(); }, 1500);
+    } catch (e) {}
+  }
+
+  /* ---- favicon shows the countdown while a session is running ---------
+     Extends the existing "timer in the tab title" trick to the favicon
+     itself — canvas-drawn, no new image assets.                          */
+  var favEl = document.querySelector('link[rel="icon"]');
+  var favOrigHref = favEl ? favEl.getAttribute("href") : null;
+  var favOrigType = favEl ? favEl.getAttribute("type") : null;
+  var favCanvas = document.createElement("canvas");
+  favCanvas.width = 32; favCanvas.height = 32;
+  var favCtx = favCanvas.getContext("2d");
+  var lastFavMin = null;
+
+  function paintFavicon() {
+    if (!favEl) return;
+    if (!focus.running) {
+      if (lastFavMin !== null) {
+        favEl.setAttribute("type", favOrigType || "image/svg+xml");
+        favEl.setAttribute("href", favOrigHref);
+        lastFavMin = null;
+      }
+      return;
+    }
+    var m = Math.ceil(focus.left / 60);
+    if (m === lastFavMin) return;
+    lastFavMin = m;
+    var ctx = favCtx;
+    ctx.clearRect(0, 0, 32, 32);
+    ctx.beginPath();
+    ctx.arc(16, 16, 15, 0, Math.PI * 2);
+    ctx.fillStyle = focus.mode === "focus" ? "#a78bfa" : "#34d399";
+    ctx.fill();
+    var frac = (total() - focus.left) / total();
+    ctx.beginPath();
+    ctx.arc(16, 16, 15, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "rgba(255,255,255,.9)";
+    ctx.stroke();
+    ctx.fillStyle = "#0b0714";
+    ctx.font = "bold 15px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(String(m), 16, 17);
+    favEl.setAttribute("type", "image/png");
+    favEl.setAttribute("href", favCanvas.toDataURL("image/png"));
+  }
+
   function paintFocus() {
     var m = Math.floor(focus.left / 60), s = focus.left % 60;
     fTime.textContent = m + ":" + String(s).padStart(2, "0");
@@ -677,6 +1134,7 @@
     document.title = focus.running
       ? fTime.textContent + " · " + (focus.mode === "focus" ? "Focus" : "Break")
       : "SK";
+    paintFavicon();
   }
 
   function focusTick() {
@@ -686,9 +1144,11 @@
         focus.done++; store.set("pomodoros", focus.done);
         focus.mode = "break"; focus.left = POM.breakMinutes * 60;
         toast("Focus done — take " + POM.breakMinutes + " minutes.");
+        chime();
       } else {
         focus.mode = "focus"; focus.left = POM.focusMinutes * 60;
         toast("Break over. Back to it.");
+        chime();
       }
     }
     paintFocus();
@@ -781,6 +1241,66 @@
     return out;
   }
 
+  /* ---- shared list renderer --------------------------------------------
+     Todo and Reading share the exact same row shape (checkbox, text,
+     optional badge, delete-with-animation) — one renderer, parameterized,
+     instead of two copies that would drift apart under future edits.
+     `onDelete`/`onToggle` receive the ITEM, not an index — deletion always
+     looks the item up by reference at click time (`splice(indexOf(item))`),
+     so two quick deletes in a row (each carrying its own 220ms removal
+     animation) can never resolve against a stale, since-shifted index. */
+  function renderList(container, items, emptyText, opts) {
+    container.textContent = "";
+    if (!items.length) {
+      var empty = document.createElement("li");
+      empty.className = "todo-empty";
+      empty.textContent = emptyText;
+      container.appendChild(empty);
+      return;
+    }
+
+    items.forEach(function (item) {
+      var li = document.createElement("li");
+      li.className = "todo-item" + (opts.done(item) ? " done" : "") +
+        (opts.bang && opts.bang(item) ? " bang" : "");
+
+      var box = document.createElement("button");
+      box.className = "todo-box"; box.type = "button";
+      box.setAttribute("aria-label", opts.done(item) ? opts.undoneLabel : opts.doneLabel);
+      var chk = svgEl("svg", { viewBox: "0 0 12 12" });
+      chk.appendChild(svgEl("path", { d: "M2 6.3l2.6 2.6L10 3.5" }));
+      box.appendChild(chk);
+      box.addEventListener("click", function () { opts.onToggle(item); });
+      li.appendChild(box);
+
+      var textEl = document.createElement(opts.href ? "a" : "span");
+      textEl.className = "todo-text";
+      textEl.textContent = opts.text(item);
+      if (opts.href) {
+        textEl.href = opts.href(item);
+        textEl.addEventListener("click", function (e) { e.preventDefault(); opts.onOpen(item); });
+      }
+      li.appendChild(textEl);
+
+      if (opts.meta) {
+        var m = opts.meta(item);
+        if (m) li.appendChild(m);
+      }
+
+      var del = document.createElement("button");
+      del.className = "todo-del"; del.type = "button";
+      del.textContent = "×";
+      del.setAttribute("aria-label", opts.deleteLabel);
+      del.addEventListener("click", function () {
+        li.classList.add("removing");
+        setTimeout(function () { opts.onDelete(item); }, 220);
+      });
+      li.appendChild(del);
+
+      container.appendChild(li);
+    });
+  }
+
   var todos = store.get("todos", []) || [];
   var list = $("todo-list"), count = $("todo-count"),
       tInput = $("todo-input"), pHint = $("parse-hint");
@@ -788,56 +1308,27 @@
   function saveTodos() { store.set("todos", todos); }
 
   function renderTodos() {
-    list.textContent = "";
     var open = todos.filter(function (t) { return !t.done; }).length;
     count.textContent = todos.length ? open + " open" : "";
 
-    if (!todos.length) {
-      var li = document.createElement("li");
-      li.className = "todo-empty";
-      li.textContent = "Nothing yet. Add one above.";
-      list.appendChild(li);
-      return;
-    }
-
-    todos.forEach(function (t, i) {
-      var li = document.createElement("li");
-      li.className = "todo-item" + (t.done ? " done" : "") + (t.bang ? " bang" : "");
-
-      var box = document.createElement("button");
-      box.className = "todo-box"; box.type = "button";
-      box.setAttribute("aria-label", t.done ? "Mark not done" : "Mark done");
-      var chk = svgEl("svg", { viewBox: "0 0 12 12" });
-      chk.appendChild(svgEl("path", { d: "M2 6.3l2.6 2.6L10 3.5" }));
-      box.appendChild(chk);
-      box.addEventListener("click", function () {
-        todos[i].done = !todos[i].done; saveTodos(); renderTodos();
-      });
-      li.appendChild(box);
-
-      var text = document.createElement("span");
-      text.className = "todo-text";
-      text.textContent = t.text;
-      li.appendChild(text);
-
-      if (t.when) {
+    renderList(list, todos, "Nothing yet. Add one above.", {
+      text: function (t) { return t.text; },
+      done: function (t) { return t.done; },
+      bang: function (t) { return t.bang; },
+      doneLabel: "Mark done", undoneLabel: "Mark not done", deleteLabel: "Delete task",
+      meta: function (t) {
+        if (!t.when) return null;
         var w = document.createElement("span");
         w.className = "todo-when";
         w.textContent = t.when;
-        li.appendChild(w);
+        return w;
+      },
+      onToggle: function (t) { t.done = !t.done; saveTodos(); renderTodos(); },
+      onDelete: function (t) {
+        var idx = todos.indexOf(t);
+        if (idx !== -1) todos.splice(idx, 1);
+        saveTodos(); renderTodos();
       }
-
-      var del = document.createElement("button");
-      del.className = "todo-del"; del.type = "button";
-      del.textContent = "×";
-      del.setAttribute("aria-label", "Delete task");
-      del.addEventListener("click", function () {
-        li.classList.add("removing");
-        setTimeout(function () { todos.splice(i, 1); saveTodos(); renderTodos(); }, 220);
-      });
-      li.appendChild(del);
-
-      list.appendChild(li);
     });
   }
 
@@ -862,6 +1353,52 @@
 
   renderTodos();
 
+  /* ====================================================================
+     READING LIST — paste a link, save it locally for later
+     ==================================================================== */
+  var reading = store.get("reading", []) || [];
+  var rList = $("reading-list"), rCount = $("reading-count"), rInput = $("reading-input");
+
+  function saveReading() { store.set("reading", reading); }
+
+  function renderReading() {
+    rCount.textContent = reading.length ? reading.length + " saved" : "";
+
+    renderList(rList, reading, "Nothing saved yet.", {
+      text: function (r) { return r.title || r.hostname; },
+      done: function (r) { return r.read; },
+      href: function (r) { return r.url; },
+      doneLabel: "Mark read", undoneLabel: "Mark unread", deleteLabel: "Remove",
+      onOpen: function (r) { go(r.url); },
+      onToggle: function (r) { r.read = !r.read; saveReading(); renderReading(); },
+      onDelete: function (r) {
+        var idx = reading.indexOf(r);
+        if (idx !== -1) reading.splice(idx, 1);
+        saveReading(); renderReading();
+      }
+    });
+  }
+
+  $("reading-form").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var v = rInput.value.trim();
+    if (!v) return;
+    // Deliberately dumb split (no NLP, unlike parseTask above) — the URL is
+    // whatever comes before the first space, the rest is an optional title.
+    var sp = v.indexOf(" ");
+    var head = sp > 0 ? v.slice(0, sp) : v;
+    var rest = sp > 0 ? v.slice(sp + 1).trim() : "";
+    var url = asUrl(head);
+    if (!url) { toast("Not a valid URL"); return; }
+    var hostname;
+    try { hostname = new URL(url).hostname; } catch (e2) { hostname = url; }
+    reading.push({ id: Date.now(), url: url, title: rest, hostname: hostname, addedAt: Date.now(), read: false });
+    rInput.value = "";
+    saveReading(); renderReading();
+  });
+
+  renderReading();
+
   var notes = $("notes"), notesStatus = $("notes-status"), saveTimer;
   notes.value = store.get("notes", "") || "";
   notes.addEventListener("input", function () {
@@ -873,6 +1410,98 @@
       setTimeout(function () { notesStatus.textContent = ""; }, 1300);
     }, 400);
   });
+
+  /* ---- markdown preview — a hand-written subset (bold, code, checklists),
+     not a library: matches the project's "no npm install" rule.          */
+  function escapeHtml(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  function mdInline(t) {
+    return t.replace(/`([^`]+)`/g, "<code>$1</code>")
+            .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  }
+  function renderMarkdown(src) {
+    if (!src.trim()) return '<span style="color:var(--muted)">Nothing here yet.</span>';
+    return escapeHtml(src).split("\n").map(function (line) {
+      var m = line.match(/^(\s*)-\s\[( |x|X)\]\s(.*)$/);
+      if (m) {
+        var on = m[2].toLowerCase() === "x";
+        return m[1] + '<label><input type="checkbox" disabled' + (on ? " checked" : "") +
+               "> " + mdInline(m[3]) + "</label>";
+      }
+      return mdInline(line) || "&nbsp;";
+    }).join("<br>");
+  }
+
+  var notesPreview = $("notes-preview"), previewBtn = $("notes-preview-toggle");
+  var previewOn = false;
+  previewBtn.addEventListener("click", function () {
+    previewOn = !previewOn;
+    previewBtn.classList.toggle("on", previewOn);
+    previewBtn.textContent = previewOn ? "edit" : "preview";
+    notes.hidden = previewOn;
+    notesPreview.hidden = !previewOn;
+    if (previewOn) notesPreview.innerHTML = renderMarkdown(notes.value);
+  });
+
+  /* ====================================================================
+     BACKUP — export/import your own data as a JSON file. Everything here
+     lives only in this browser's localStorage (see `store` above), so
+     clearing site data or switching machines loses it without this.
+     ==================================================================== */
+  function exportData() {
+    var data = {};
+    for (var i = 0; i < localStorage.length; i++) {
+      var k = localStorage.key(i);
+      // skip skhome.live.* — those are just re-fetchable API caches, not
+      // real user data, and would only bloat the backup file.
+      if (k && k.indexOf("skhome.") === 0 && k.indexOf("skhome.live.") !== 0) {
+        data[k] = localStorage.getItem(k);
+      }
+    }
+    var blob = new Blob(
+      [JSON.stringify({ exportedAt: new Date().toISOString(), data: data }, null, 2)],
+      { type: "application/json" }
+    );
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = "sk-home-backup-" + new Date().toISOString().slice(0, 10) + ".json";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    toast("Backup downloaded");
+  }
+
+  var importInput = document.createElement("input");
+  importInput.type = "file";
+  importInput.accept = "application/json";
+  importInput.hidden = true;
+  document.body.appendChild(importInput);
+  importInput.addEventListener("change", function () {
+    var file = importInput.files[0];
+    importInput.value = "";
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      try {
+        var parsed = JSON.parse(String(reader.result));
+        var data = parsed && parsed.data ? parsed.data : parsed;
+        var n = 0;
+        for (var k in data) {
+          if (k.indexOf("skhome.") === 0) { localStorage.setItem(k, data[k]); n++; }
+        }
+        if (!n) { toast("Nothing to restore in that file"); return; }
+        toast("Restored " + n + " item" + (n === 1 ? "" : "s") + " — reloading…");
+        setTimeout(function () { location.reload(); }, 700);
+      } catch (e) {
+        toast("That file isn't a valid backup");
+      }
+    };
+    reader.readAsText(file);
+  });
+  function importData() { importInput.click(); }
 
   /* ====================================================================
      COMMAND PALETTE
@@ -895,6 +1524,8 @@
                run: function () { $("reset-order").click(); } });
     out.push({ label: "Toggle weather details", meta: "view", icon: "cloud",
                run: function () { $("weather").click(); } });
+    out.push({ label: "Export data (backup)", meta: "data", icon: "folder", run: exportData });
+    out.push({ label: "Import data (restore)", meta: "data", icon: "folder", run: importData });
     return out;
   }
 
@@ -1066,6 +1697,7 @@
       $("weather-label").textContent = w.label;
       box.hidden = false;
 
+      lastWx = w;
       $("subline").textContent = subline(w);
 
       if (sky && OPT.weatherParticles !== false) {
@@ -1175,7 +1807,9 @@
       var stats = $("gh-stats");
       stats.innerHTML = "";
       [[g.total90, "events / 90d"], [g.streak, "day streak"],
-       [g.repos, "repos"], [g.followers, "followers"]].forEach(function (s) {
+       [g.repos, "repos"], [g.followers, "followers"],
+       [g.totalStars, "total stars"], [g.longestStreak, "90d best streak"],
+       [g.topLanguage || "—", "top language"]].forEach(function (s) {
         var d = document.createElement("div"); d.className = "gh-stat";
         var b = document.createElement("b"); b.textContent = s[0];
         var l = document.createElement("span"); l.textContent = s[1];
@@ -1225,6 +1859,26 @@
     });
   }
 
+  function loadDevTo() {
+    if (!window.Live) return;
+    window.Live.devto().then(function (items) {
+      if (!items || !items.length) return;
+      $("devto-card").hidden = false;
+      var ul = $("devto-list");
+      ul.innerHTML = "";
+      items.forEach(function (it) {
+        var li = document.createElement("li");
+        var a = document.createElement("a");
+        a.href = it.url; a.target = "_blank"; a.rel = "noopener";
+        a.textContent = it.title;
+        var s = document.createElement("small");
+        s.textContent = it.points + " reactions · " + it.comments + " comments";
+        a.appendChild(s);
+        li.appendChild(a); ul.appendChild(li);
+      });
+    });
+  }
+
   function loadMarkets() {
     if (!window.Live) return;
     window.Live.markets().then(function (rows) {
@@ -1250,6 +1904,15 @@
     });
   }
 
+  function loadOnThisDay() {
+    if (!window.Live) return;
+    window.Live.onThisDay().then(function (fact) {
+      if (!fact) return;
+      otdFact = fact.year ? fact.text + " (" + fact.year + ")" : fact.text;
+      $("subline").textContent = subline(lastWx);
+    });
+  }
+
   /* ====================================================================
      BOOT
      ==================================================================== */
@@ -1265,12 +1928,29 @@
     else setTimeout(fn, 320);
   }
   afterPaint(function () {
-    loadWeather(); loadGitHub(); loadHN(); loadMarkets();
+    loadWeather(); loadGitHub(); loadHN(); loadDevTo(); loadMarkets(); loadOnThisDay();
   });
 
   if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
     window.addEventListener("load", function () {
+      // hadController is false on the very first-ever load in this browser
+      // (no SW controlling yet) — only show the toast for a REAL update
+      // later, not for the initial install taking control.
+      var hadController = !!navigator.serviceWorker.controller;
       navigator.serviceWorker.register("sw.js").catch(function () {});
+      navigator.serviceWorker.addEventListener("controllerchange", function () {
+        if (!hadController) { hadController = true; return; }
+        clearTimeout(toastTimer);
+        toastEl.textContent = "Update ready — ";
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = "refresh";
+        btn.className = "toast-action";
+        btn.addEventListener("click", function () { location.reload(); });
+        toastEl.appendChild(btn);
+        toastEl.hidden = false;
+        toastEl.classList.remove("out");
+      });
     });
   }
 })();

@@ -4,7 +4,7 @@
    don't hand-edit it, just run the script (or a pre-commit hook does it
    for you, see .githooks/). */
 
-const CACHE = "sk-home-80a916e9e8";
+const CACHE = "sk-home-f675918e6c";
 
 const SHELL = [
   "./",
@@ -45,6 +45,11 @@ self.addEventListener("fetch", (e) => {
 
   // Never cache the weather API — always live, and failure is handled in app.js.
   if (url.origin !== self.location.origin) return;
+
+  // Never cache the suggestion proxy — same-origin but per-keystroke and
+  // already governed by its own Cache-Control header (see api/suggest.js);
+  // caching it here would serve a session's first-ever query result forever.
+  if (url.pathname.startsWith("/api/")) return;
 
   // Shell: cache first, then refresh in the background.
   e.respondWith(

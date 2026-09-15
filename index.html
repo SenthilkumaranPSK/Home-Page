@@ -59,6 +59,7 @@
            placeholder="Search — or press Tab to switch engine">
     <button class="engine-pill" id="engine-pill" type="button"
             aria-label="Change search engine"></button>
+    <ul class="suggest-list" id="search-suggest" role="listbox" hidden></ul>
   </form>
   <p class="search-hint" id="search-hint"></p>
 
@@ -127,16 +128,37 @@
     <article class="card">
       <div class="card-head">
         <h2>Notes</h2>
-        <span class="card-meta" id="notes-status"></span>
+        <span class="card-head-right">
+          <button class="notes-preview-btn" id="notes-preview-toggle" type="button">preview</button>
+          <span class="card-meta" id="notes-status"></span>
+        </span>
       </div>
       <textarea class="notes" id="notes"
                 placeholder="Scratchpad — saved automatically, stays on this device."
                 aria-label="Notes"></textarea>
+      <div class="notes notes-preview" id="notes-preview" hidden></div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h2>Reading list</h2>
+        <span class="card-meta" id="reading-count"></span>
+      </div>
+      <form id="reading-form" autocomplete="off">
+        <input class="field" id="reading-input" type="text"
+               placeholder="Paste a link — optionally add a title after it" aria-label="Save a link">
+      </form>
+      <ul class="todo-list" id="reading-list"></ul>
     </article>
 
     <article class="card feed-card" id="hn-card" hidden>
       <div class="card-head"><h2>Hacker News</h2><span class="card-meta">front page</span></div>
       <ul class="feed" id="hn-list"></ul>
+    </article>
+
+    <article class="card feed-card" id="devto-card" hidden>
+      <div class="card-head"><h2>Dev.to</h2><span class="card-meta">front page</span></div>
+      <ul class="feed" id="devto-list"></ul>
     </article>
 
     <article class="card" id="market-card" hidden>

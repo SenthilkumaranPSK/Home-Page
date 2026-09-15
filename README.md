@@ -4,7 +4,9 @@ A personal start page that's alive: a sky that changes with the hour, a greeting
 that knows what day it is, your real GitHub activity, and everything one keystroke
 away.
 
-No framework, no build step, no `npm install`. Open `index.html` and it runs.
+No framework, no build step, no `npm install`. Open `index.html` and it runs. The one
+exception is real search suggestions, which need a server (see below) — everything
+else, including the site with suggestions turned off, is fully static.
 
 Everything you'd want to change lives in **`config.js`**.
 
@@ -31,16 +33,34 @@ row you've opened the page.
 | Weather + 12-hour curve | Open-Meteo | 20 min |
 | GitHub stats + 90-day activity heatmap | GitHub public API | 30 min |
 | Hacker News front page | HN via Algolia | 20 min |
-| Crypto prices + 24h change | CoinGecko | 10 min |
+| Dev.to front page | dev.to's own API | 20 min |
+| Crypto prices + 24h change | CoinGecko (Binance as fallback) | 10 min |
+| "On this day" fact, folded into the rotating subline | Wikipedia | 12 hr |
 
-All four are keyless, free, and CORS-open — no signup, no tokens, no server. Each
+All six are keyless, free, and CORS-open — no signup, no tokens, no server. Each
 card only appears if its feed answers, and everything is cached, so offline just
-shows the last reading.
+shows the last reading. The GitHub card also shows total stars, top language, and a
+90-day-scoped "best streak" — computed from data it already fetches, no extra calls.
+If CoinGecko's free tier rate-limits, the markets card quietly falls back to
+Binance's ticker (converted to your configured currency) instead of going blank.
+
+**A search bar that knows things.** Type 2+ characters and a suggestions dropdown
+appears (arrow keys + Enter to pick one) — powered by the one small serverless
+function this project ships, see [Search suggestions](#search-suggestions) below. The
+same box doubles as a calculator (`12 * 4 + 3`) and a unit/currency/time converter
+(`10 usd to inr`, `5 km to mi`, `3pm ist to pst`) — Enter copies the answer instead of
+searching. `todo buy milk` or `note idea for project` push straight into the Todo/
+Notes cards instead.
 
 **Things to do, not just links.** A pomodoro timer with a progress ring (it counts
-your sessions and puts the countdown in the tab title), a countdown to a date you
-set, a todo list that parses what you type — `call ravi 4pm !` becomes *call ravi* ·
-**4:00 PM** · priority — and a scratchpad. All saved locally.
+your sessions and puts the countdown in the tab title, plays a soft chime when a
+session ends, and shows the countdown right on the favicon), a countdown to a date
+you set, a todo list that parses what you type — `call ravi 4pm !` becomes *call
+ravi* · **4:00 PM** · priority — a reading list for links you want to get back to,
+and a scratchpad with an optional Markdown preview (bold, `code`, `- [ ]`
+checklists). All saved locally — and exportable: **Ctrl/⌘+K → Export data** downloads
+everything as one JSON file, **Import data** restores it (on this machine or a new
+one).
 
 **Tiles you can rearrange.** Drag any tile; the others slide out of the way and the
 new order is saved. "reset order" in the footer puts it back.
@@ -89,6 +109,28 @@ exactly the four API origins the page calls.
 > covers it — Vercel Authentication can be scoped to exclude custom domains, which
 > would quietly leave a custom domain wide open while the `*.vercel.app` URL stays
 > locked.
+
+### Search suggestions
+
+`api/suggest.js` is a one-file Vercel serverless function — it proxies Google's own
+suggest endpoint server-side, because Google (and Bing, and DuckDuckGo) don't send
+CORS headers on their suggest APIs, so the browser can't call them directly. It's
+auto-detected by Vercel, no config or dependencies needed, and deploys with the rest
+of the folder.
+
+After your first deploy, point `config.js`'s `search.suggestEndpoint` at your own URL:
+
+```js
+search: {
+  suggestEndpoint: "https://YOUR-PROJECT.vercel.app/api/suggest",
+},
+```
+
+Set it to `null` to turn suggestions off entirely. Because the Chrome extension and
+`file://` testing have no `/api/` route, this has to be an absolute URL, not a
+relative one — the rest of the page (including the extension) still works completely
+normally with suggestions disabled, this is the only piece of the project that needs
+a server at all.
 
 ---
 
@@ -180,9 +222,14 @@ Open **`config.js`** — plain objects with comments.
 | Pomodoro lengths | `pomodoro` |
 | Your links | `groups` → `links` |
 | Search engines and prefixes | `engines` (first is the default) |
+| Search suggestions endpoint | `search.suggestEndpoint` — your deployed `/api/suggest` URL, or `null` to disable |
+| Dev.to card | `feeds.devto` |
+| "On this day" fact | `feeds.onThisDay` |
+| Pomodoro end-of-session chime | `options.focusChime` |
 | Motion switches, clock format | `options` |
 
-Set `github`, `markets`, `feeds` or `countdown` to `null` to hide that card.
+Set `github`, `markets`, `feeds`, `countdown` or `search.suggestEndpoint` to `null` to
+hide that card / disable that feature.
 
 **Adding a link** — one line in the right group:
 
@@ -219,30 +266,39 @@ sky stops painting entirely whenever the tab isn't visible.
 | `Ctrl`/`⌘` + `K` | Command palette over every link and action |
 | `/` | Jump to the search box |
 | `Tab` (in search) | Cycle search engine |
+| `↑` `↓` (in search) | Move through suggestions |
 | `1`–`9` | Open the first nine tiles |
 | a letter | Open the link with that `key` |
 | hold `Alt` | Reveal every shortcut badge |
-| `Esc` | Close the palette / clear search |
+| `Esc` | Close suggestions / the palette, then clear search |
 
 **Search prefixes** — prefix, space, then your query: `p ` Perplexity · `c ` Claude ·
 `gpt ` ChatGPT · `y ` YouTube · `gh ` GitHub · `d ` DeepSeek · `g ` Google. Anything
 that looks like a domain (`github.com/you`, `localhost:3000`) is opened rather than
-searched.
+searched. A recognized calculator or converter expression (`12 * 4`, `10 usd to inr`,
+`3pm ist to pst`) shows its answer instead — Enter copies it rather than searching.
+`todo ` and `note ` push straight into the Todo/Notes cards instead of searching.
+
+**Backup** — `Ctrl`/`⌘` + `K` → **Export data** downloads everything (todos, notes,
+reading list, streaks, tile order) as one JSON file; **Import data** restores it.
+Nothing here is ever synced anywhere on its own — this is the way to move it, or to
+not lose it if you clear your browser's site data.
 
 ---
 
 ## What's deliberately not here
 
-Three things get asked for and can't be done honestly from a static page, so the page
-doesn't fake them:
+Three things get asked for and can't be done honestly without a backend holding your
+credentials, so the page doesn't fake them:
 
 - **Gmail unread count** — needs OAuth, and the token needs a server to live on.
 - **Google Calendar events** — the ICS feed refuses cross-origin browser reads.
 - **Spotify now-playing** — OAuth again.
 
-Each needs a backend holding your credentials. Vercel serverless functions (an `api/`
-folder, still no build step) are the small next step if you want them — say the word
-and I'll add it.
+These are a different problem than search suggestions: `api/suggest.js` proxies a
+*keyless, public* endpoint, so it never has to hold a secret. Gmail/Calendar/Spotify
+would need real OAuth tokens stored server-side — a meaningfully bigger step, not
+taken here.
 
 ---
 
@@ -274,6 +330,7 @@ app.js                everything you interact with
 config.js         ←   edit this
 sw.js                 offline cache
 manifest.webmanifest  installable on phones
+api/suggest.js        the one serverless function — proxies search suggestions
 vercel.json           cache + security headers (incl. CSP)
 sync.sh / sync.bat    sync extension/ + bump sw.js's cache name (--check to verify only)
 sync.ps1              PowerShell logic sync.bat calls into
