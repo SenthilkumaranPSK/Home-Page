@@ -78,11 +78,17 @@ cd sk-home
 vercel --prod
 ```
 
-`vercel.json` already sets caching and `noindex` headers.
+`vercel.json` already sets caching, `noindex`, and a Content-Security-Policy scoped to
+exactly the four API origins the page calls.
 
 > **Make it private.** Vercel → project → Settings → Deployment Protection → Vercel
 > Authentication. Then only your logged-in account can open the URL. Worth doing —
 > the page has your links, notes and todos on it.
+>
+> If you ever attach a **custom domain**, check the protection's "applies to" setting
+> covers it — Vercel Authentication can be scoped to exclude custom domains, which
+> would quietly leave a custom domain wide open while the `*.vercel.app` URL stays
+> locked.
 
 ---
 
@@ -113,11 +119,21 @@ paints instantly with no connection.
 Chrome shows a "Disable developer mode extensions?" bubble on startup. That's normal
 for unpacked extensions — click the **X**, not "Disable".
 
-**After editing `config.js`**, re-copy it into the extension:
+**After editing `config.js`** (or any shell file), re-copy it into the extension:
 
 ```bash
 ./sync.sh          # macOS / Linux / Git Bash / WSL
 sync.bat           # Windows
+```
+
+This also re-derives `sw.js`'s cache name from the shell files' content, so the
+service worker never serves a stale page after an edit. `./sync.sh --check` (or
+`sync.bat --check`) reports what's out of sync without changing anything — useful
+before a commit. To have that check run automatically and block a commit that forgot
+it:
+
+```bash
+git config core.hooksPath .githooks
 ```
 
 Then hit ↻ on the extension card at `chrome://extensions`.
@@ -258,8 +274,11 @@ app.js                everything you interact with
 config.js         ←   edit this
 sw.js                 offline cache
 manifest.webmanifest  installable on phones
-vercel.json           cache + security headers
-sync.sh / sync.bat    copy the page into extension/
+vercel.json           cache + security headers (incl. CSP)
+sync.sh / sync.bat    sync extension/ + bump sw.js's cache name (--check to verify only)
+sync.ps1              PowerShell logic sync.bat calls into
+.githooks/pre-commit  blocks a commit if sync.sh --check fails (opt in, see above)
+.gitattributes        keeps line endings consistent so the cache hash doesn't drift
 assets/               icons
 extension/            the Chrome New Tab extension
 ```

@@ -1,0 +1,10 @@
+# Normalize text files to LF in the repo; Git still checks them out as
+# CRLF on Windows if core.autocrlf=true, but the stored/diffed content
+# stays consistent across machines. (sync.sh/sync.ps1 also strip \r
+# before hashing, so a CRLF checkout can't spuriously bump the
+# service-worker cache version on its own.)
+* text=auto eol=lf
+
+*.png binary
+*.ico binary
+*.webmanifest text eol=lf

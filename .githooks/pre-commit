@@ -1,0 +1,16 @@
+#!/bin/sh
+# Blocks a commit if extension/ or sw.js's cache name have drifted out of
+# sync with the root shell files (index.html, styles.css, config.js,
+# cosmos.js, live.js, app.js, manifest.webmanifest).
+#
+# One-time setup to enable this hook:
+#   git config core.hooksPath .githooks
+
+set -e
+cd "$(git rev-parse --show-toplevel)"
+
+./sync.sh --check || {
+  echo ""
+  echo "Commit blocked — run ./sync.sh (or sync.bat) and re-commit."
+  exit 1
+}
