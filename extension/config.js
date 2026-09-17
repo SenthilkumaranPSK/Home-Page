@@ -104,7 +104,12 @@ const CONFIG = {
 
   /* ---- Search engines --------------------------------------------------
      `key` is the prefix you type followed by a space:  p react hooks
-     Tab cycles engines. The first entry is the default.                  */
+     Tab cycles engines. The first entry is the default.
+
+     `bang: true` keeps an entry OUT of the Tab cycle — it still works as a
+     typed prefix, it just doesn't take a turn in the rotation. That's what
+     makes it safe to add as many of these as you like: a dozen bangs would
+     otherwise mean a dozen presses of Tab to get back to Google.          */
   engines: [
     { key: "g",   name: "Google",     url: "https://www.google.com/search?q=%s",              color: "#4285f4" },
     { key: "p",   name: "Perplexity", url: "https://www.perplexity.ai/search?q=%s",           color: "#20b8cd" },
@@ -113,6 +118,13 @@ const CONFIG = {
     { key: "y",   name: "YouTube",    url: "https://www.youtube.com/results?search_query=%s", color: "#ff0033" },
     { key: "gh",  name: "GitHub",     url: "https://github.com/search?q=%s",                  color: "#8b949e" },
     { key: "d",   name: "DeepSeek",   url: "https://chat.deepseek.com/?q=%s",                 color: "#4d6bfe" },
+
+    /* Bangs — typed prefixes only, never in the Tab cycle. */
+    { key: "!w",   name: "Wikipedia",      url: "https://en.wikipedia.org/w/index.php?search=%s", color: "#a2a9b1", bang: true },
+    { key: "!r",   name: "Reddit",         url: "https://www.reddit.com/search/?q=%s",            color: "#ff4500", bang: true },
+    { key: "!so",  name: "Stack Overflow", url: "https://stackoverflow.com/search?q=%s",          color: "#f48024", bang: true },
+    { key: "!npm", name: "npm",            url: "https://www.npmjs.com/search?q=%s",              color: "#cb3837", bang: true },
+    { key: "!mdn", name: "MDN",            url: "https://developer.mozilla.org/en-US/search?q=%s", color: "#83d0f2", bang: true },
   ],
 
   /* ---- Your links ------------------------------------------------------

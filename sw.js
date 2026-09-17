@@ -4,7 +4,7 @@
    don't hand-edit it, just run the script (or a pre-commit hook does it
    for you, see .githooks/). */
 
-const CACHE = "sk-home-f675918e6c";
+const CACHE = "sk-home-de8f828def";
 
 const SHELL = [
   "./",

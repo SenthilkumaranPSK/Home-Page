@@ -579,8 +579,13 @@
 
   var engineIdx = 0;
   (function () {
+    // The default must be a cyclable engine — if someone marks their first
+    // entry `bang: true`, fall through to the first one that isn't.
+    for (var i = 0; i < ENGINES.length; i++) {
+      if (!ENGINES[i].bang) { engineIdx = i; break; }
+    }
     var saved = store.get("engine", null);
-    ENGINES.forEach(function (e, i) { if (e.key === saved) engineIdx = i; });
+    ENGINES.forEach(function (e, i) { if (e.key === saved && !e.bang) engineIdx = i; });
   })();
 
   var input = $("search-input"), pill = $("engine-pill"), hint = $("search-hint");
@@ -594,8 +599,15 @@
     }
   }
 
+  /* `bang: true` engines are prefix-only — Tab steps over them, so adding a
+     dozen bangs to config.js never lengthens the rotation. Bounded by the
+     engine count so an all-bang list can't spin forever; it just stops. */
   function cycleEngine(step) {
-    engineIdx = (engineIdx + (step || 1) + ENGINES.length) % ENGINES.length;
+    var dir = step < 0 ? -1 : 1;
+    for (var n = 0; n < ENGINES.length; n++) {
+      engineIdx = (engineIdx + dir + ENGINES.length) % ENGINES.length;
+      if (!ENGINES[engineIdx].bang) break;
+    }
     store.set("engine", ENGINES[engineIdx].key);
     paintPill(true);
     updateHint();
@@ -797,6 +809,128 @@
     return { type: "time", value: out };
   }
 
+  /* ---- developer conversions -------------------------------------------
+     Colour, epoch, base64 and byte sizes. Every pattern here is anchored on
+     a literal marker — a leading "#", an "rgb(", or a "ts "/"b64 " keyword —
+     except the byte sizes, which need a unit the UNITS tables above don't
+     define. That's what keeps this branch from stealing plain searches, and
+     it's why it runs LAST, after the unit/currency/time converters have had
+     their turn: anything reaching here already failed every other parse. */
+  var BYTE_UNITS = {
+    b: 1, byte: 1, bytes: 1,
+    /* kb/mb/gb are 1024-based here, not the SI 1000. Every place a developer
+       actually meets these numbers — file managers, `ls -lh`, disk usage —
+       uses 1024, so "1048576 b to mb" reading 1 is the useful answer. The
+       explicit kib/mib/gib spellings are accepted as aliases, not as a
+       second, differing scale. */
+    kb: 1024, kib: 1024,
+    mb: 1048576, mib: 1048576,
+    gb: 1073741824, gib: 1073741824,
+    tb: 1099511627776, tib: 1099511627776
+  };
+
+  function rgbToHsl(r, g, b) {
+    r /= 255; g /= 255; b /= 255;
+    var max = Math.max(r, g, b), min = Math.min(r, g, b);
+    var l = (max + min) / 2, h = 0, s = 0;
+    if (max !== min) {
+      var d = max - min;
+      s = l > .5 ? d / (2 - max - min) : d / (max + min);
+      if (max === r)      h = (g - b) / d + (g < b ? 6 : 0);
+      else if (max === g) h = (b - r) / d + 2;
+      else                h = (r - g) / d + 4;
+      h /= 6;
+    }
+    return [Math.round(h * 360), Math.round(s * 100), Math.round(l * 100)];
+  }
+
+  function hexToRgb(hex) {
+    if (hex.length === 3) hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
+    return [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16)];
+  }
+
+  function toHex(n) { return ("0" + n.toString(16)).slice(-2); }
+
+  /* btoa/atob are Latin-1 only — they throw on "café" and on any emoji.
+     Round-tripping through UTF-8 bytes first makes both directions total. */
+  function b64Encode(str) {
+    var bytes = new TextEncoder().encode(str), bin = "";
+    for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin);
+  }
+
+  function b64Decode(str) {
+    var bin = atob(str), bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new TextDecoder().decode(bytes);
+  }
+
+  function parseDevCalc(raw) {
+    var s = raw.trim(), m;
+
+    /* #3b82f6 to rgb | to hsl | to hex */
+    m = s.match(/^#([0-9a-f]{3}|[0-9a-f]{6})\s+(?:to|in)\s+(rgb|hsl|hex)$/i);
+    if (m) {
+      var c = hexToRgb(m[1].toLowerCase()), want = m[2].toLowerCase();
+      if (want === "rgb") return { value: "rgb(" + c.join(", ") + ")" };
+      if (want === "hex") return { value: "#" + c.map(toHex).join("") };
+      var hsl = rgbToHsl(c[0], c[1], c[2]);
+      return { value: "hsl(" + hsl[0] + ", " + hsl[1] + "%, " + hsl[2] + "%)" };
+    }
+
+    /* rgb(59,130,246) to hex — parens and the rgb prefix both optional */
+    m = s.match(/^(?:rgba?\s*\(?\s*)?(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)?\s+(?:to|in)\s+(hex|hsl|rgb)$/i);
+    if (m) {
+      var r = +m[1], g = +m[2], b = +m[3];
+      if (r > 255 || g > 255 || b > 255) return null;
+      var w = m[4].toLowerCase();
+      if (w === "hex") return { value: "#" + [r, g, b].map(toHex).join("") };
+      if (w === "rgb") return { value: "rgb(" + r + ", " + g + ", " + b + ")" };
+      var h = rgbToHsl(r, g, b);
+      return { value: "hsl(" + h[0] + ", " + h[1] + "%, " + h[2] + "%)" };
+    }
+
+    /* ts 1718000000 — seconds or milliseconds, told apart by digit count.
+       "ts now" goes the other way and hands back the current epoch. */
+    m = s.match(/^ts\s+(\d{1,13})$/i);
+    if (m) {
+      var n = parseInt(m[1], 10);
+      var ms = m[1].length > 10 ? n : n * 1000;
+      var d = new Date(ms);
+      if (isNaN(d.getTime())) return null;
+      return { value: d.toLocaleString(undefined, {
+        year: "numeric", month: "short", day: "numeric",
+        hour: "numeric", minute: "2-digit"
+      }) };
+    }
+    if (/^ts\s+now$/i.test(s)) return { value: String(Math.floor(Date.now() / 1000)) };
+
+    /* b64 hello / b64d aGVsbG8= */
+    m = s.match(/^b64\s+(.+)$/i);
+    if (m) { try { return { value: b64Encode(m[1]) }; } catch (e) { return null; } }
+
+    m = s.match(/^b64d\s+(\S+)$/i);
+    if (m) {
+      try {
+        var out = b64Decode(m[1]);
+        // atob is lenient — it happily "decodes" plenty of non-base64 text
+        // into replacement characters. Treat that as a miss so the input
+        // falls through to being an ordinary search.
+        return out && out.indexOf("\uFFFD") === -1 ? { value: out } : null;
+      } catch (e) { return null; }
+    }
+
+    /* 1048576 b to mb */
+    m = s.match(/^([\d.]+)\s*([a-z]+)\s+(?:to|in)\s+([a-z]+)$/i);
+    if (m) {
+      var amt = parseFloat(m[1]);
+      var from = BYTE_UNITS[m[2].toLowerCase()], to = BYTE_UNITS[m[3].toLowerCase()];
+      if (!isNaN(amt) && from && to) return { value: trimNum(amt * from / to) + " " + m[3].toUpperCase() };
+    }
+
+    return null;
+  }
+
   /* ---- suggestions dropdown ---------------------------------------------
      Modeled on the command palette's list/select pattern (see below).     */
   var sug = [], sugSel = -1, sugTimer, sugToken = 0;
@@ -925,6 +1059,16 @@
       return;
     }
 
+    var dev = parseDevCalc(raw);
+    if (dev) {
+      lastCalcResult = dev.value;
+      // Unlike every other result here, this one can be arbitrary text —
+      // "b64d PHNjcmlwdD4=" decodes to markup. Escape before innerHTML.
+      hint.innerHTML = "↵&nbsp; = <b>" + escapeHtml(dev.value) + "</b> &nbsp;·&nbsp; copy";
+      closeSuggest();
+      return;
+    }
+
     var url = asUrl(raw);
     if (url) {
       hint.innerHTML = "↵&nbsp; Go to <b>" + url.replace(/^https?:\/\//, "") + "</b>";
@@ -974,9 +1118,7 @@
     var qa = parseQuickAdd(input.value.trim());
     if (qa) {
       if (qa.kind === "todo") {
-        var p = parseTask(qa.text);
-        todos.push({ text: p.text, when: p.when, bang: p.bang, done: false });
-        saveTodos(); renderTodos();
+        addTodo(parseTask(qa.text));
         toast("Added to todo");
       } else {
         notes.value = (notes.value ? notes.value + "\n" : "") + qa.text;
@@ -1303,15 +1445,56 @@
 
   var todos = store.get("todos", []) || [];
   var list = $("todo-list"), count = $("todo-count"),
-      tInput = $("todo-input"), pHint = $("parse-hint");
+      tInput = $("todo-input"), pHint = $("parse-hint"),
+      tools = $("todo-tools"), clearBtn = $("todo-clear");
+
+  /* Deliberately not persisted. This page is a new tab — it opens dozens of
+     times a day, and a filter left on "Done" would greet you with what looks
+     like an empty todo list every morning. Every load starts on "All". */
+  var todoFilter = "all";
 
   function saveTodos() { store.set("todos", todos); }
 
+  /* Single add path for both the card's own form and the "todo buy milk"
+     quick-add in the search bar. Bounces the view off "Done" first —
+     otherwise adding a task from a filtered list appears to do nothing. */
+  function addTodo(p) {
+    todos.push({ text: p.text, when: p.when, bang: p.bang, done: false });
+    if (todoFilter === "done") todoFilter = "all";
+    saveTodos(); renderTodos();
+  }
+
+  var FILTER_EMPTY = {
+    all:    "Nothing yet. Add one above.",
+    active: "Nothing left to do.",
+    done:   "Nothing completed yet."
+  };
+
+  /* renderList's callbacks take the ITEM, and this card's onToggle/onDelete
+     resolve it with todos.indexOf(t) at click time — so handing the renderer
+     a filtered copy is safe by construction. The view narrows; every write
+     still lands on the real array. */
   function renderTodos() {
     var open = todos.filter(function (t) { return !t.done; }).length;
-    count.textContent = todos.length ? open + " open" : "";
+    var doneCount = todos.length - open;
 
-    renderList(list, todos, "Nothing yet. Add one above.", {
+    count.textContent = !todos.length ? ""
+      : doneCount ? open + " open · " + doneCount + " done"
+      : open + " open";
+
+    tools.hidden = !todos.length;
+    clearBtn.hidden = !doneCount;
+    Array.prototype.forEach.call(tools.querySelectorAll(".todo-filter"), function (b) {
+      var on = b.getAttribute("data-filter") === todoFilter;
+      b.classList.toggle("is-on", on);
+      b.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+
+    var shown = todoFilter === "all" ? todos : todos.filter(function (t) {
+      return todoFilter === "done" ? t.done : !t.done;
+    });
+
+    renderList(list, shown, FILTER_EMPTY[todoFilter], {
       text: function (t) { return t.text; },
       done: function (t) { return t.done; },
       bang: function (t) { return t.bang; },
@@ -1332,6 +1515,27 @@
     });
   }
 
+  tools.addEventListener("click", function (e) {
+    var btn = e.target.closest(".todo-filter");
+    if (!btn) return;
+    todoFilter = btn.getAttribute("data-filter");
+    renderTodos();
+  });
+
+  clearBtn.addEventListener("click", function () {
+    var n = 0;
+    // Spliced in place rather than reassigning `todos` — saveTodos() and the
+    // quick-add path in submitSearch() both close over this same binding.
+    for (var i = todos.length - 1; i >= 0; i--) {
+      if (todos[i].done) { todos.splice(i, 1); n++; }
+    }
+    if (!n) return;
+    // Nothing is left to look at under "Done" once it's cleared.
+    if (todoFilter === "done") todoFilter = "all";
+    saveTodos(); renderTodos();
+    toast(n === 1 ? "Cleared 1 task" : "Cleared " + n + " tasks");
+  });
+
   tInput.addEventListener("input", function () {
     var v = tInput.value.trim();
     if (!v) { pHint.textContent = ""; return; }
@@ -1345,10 +1549,8 @@
     e.preventDefault();
     var v = tInput.value.trim();
     if (!v) return;
-    var p = parseTask(v);
-    todos.push({ text: p.text, when: p.when, bang: p.bang, done: false });
+    addTodo(parseTask(v));
     tInput.value = ""; pHint.textContent = "";
-    saveTodos(); renderTodos();
   });
 
   renderTodos();

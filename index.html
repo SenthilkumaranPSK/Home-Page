@@ -122,6 +122,14 @@
                placeholder="Add a task — try “call ravi 4pm !”" aria-label="Add a task">
       </form>
       <p class="parse-hint" id="parse-hint"></p>
+      <div class="todo-tools" id="todo-tools" hidden>
+        <div class="todo-filters" role="group" aria-label="Filter tasks">
+          <button type="button" class="todo-filter is-on" data-filter="all">All</button>
+          <button type="button" class="todo-filter" data-filter="active">Active</button>
+          <button type="button" class="todo-filter" data-filter="done">Done</button>
+        </div>
+        <button type="button" class="todo-clear" id="todo-clear" hidden>Clear done</button>
+      </div>
       <ul class="todo-list" id="todo-list"></ul>
     </article>
 
