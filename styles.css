@@ -279,6 +279,14 @@ body.no-anim .greeting .ch { animation: none; }
 
 .search {
   position: relative;
+  /* Must sit above the widget row below it. The suggestions dropdown's own
+     z-index can't do this on its own: backdrop-filter (below) makes .search
+     a stacking context, so .suggest-list's z-index only ranks it *within*
+     the search bar. Without an index here, .search paints in DOM order and
+     every .card — each its own stacking context, also via backdrop-filter —
+     lands on top of the open dropdown. Below .tile.dragging (30) so a
+     lifted tile still clears the search bar. */
+  z-index: 20;
   display: flex;
   align-items: center;
   gap: .75rem;
