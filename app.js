@@ -162,7 +162,6 @@
   }
 
   var streak = bumpStreak();
-  var otdFact = null, lastWx = null;
 
   var greetEl = $("greeting"), lastGreet = "";
 
@@ -199,34 +198,7 @@
     }
   }
 
-  function subline(wx) {
-    var now = new Date(), h = now.getHours(), day = now.getDay();
-
-    if (wx && /rain|shower|drizzle/i.test(wx.label))
-      return "Rain in " + (C.location.label || "town") + " — good day to stay in and ship.";
-    if (wx && /thunder/i.test(wx.label))
-      return "Storm outside. Back up your work.";
-
-    // Checked before the streak line below — the streak count is already
-    // shown separately in the #streak badge next to the greeting whenever
-    // it's >1, so nothing is actually lost by letting the fact win here.
-    // (Putting it after streak.count>=3 would make it permanently
-    // unreachable for anyone using this as a daily home page — a 3-day
-    // streak, once hit, never drops back below 3.)
-    if (otdFact) return otdFact;
-
-    if (streak.count >= 3)
-      return streak.count + " days in a row. Keep the chain alive.";
-    if (day === 1 && h < 12) return "Fresh week. Pick the hard thing first.";
-    if (day === 5 && h >= 17) return "Week's done. Ship one more thing or log off.";
-    if (h >= 0 && h < 5) return "Late. Whatever it is, it'll be clearer tomorrow.";
-
-    var lines = C.sublines || [];
-    return lines.length ? lines[Math.floor(Math.random() * lines.length)] : "";
-  }
-
   paintGreeting(greetingText(new Date()) + ", " + (C.name || "there"));
-  $("subline").textContent = subline(null);
 
   if (streak.count > 1) {
     var st = $("streak");
@@ -1899,8 +1871,6 @@
       $("weather-label").textContent = w.label;
       box.hidden = false;
 
-      lastWx = w;
-      $("subline").textContent = subline(w);
 
       if (sky && OPT.weatherParticles !== false) {
         sky.setWeather(w.kind === "rain" || w.kind === "storm" ? "rain"
@@ -2106,15 +2076,6 @@
     });
   }
 
-  function loadOnThisDay() {
-    if (!window.Live) return;
-    window.Live.onThisDay().then(function (fact) {
-      if (!fact) return;
-      otdFact = fact.year ? fact.text + " (" + fact.year + ")" : fact.text;
-      $("subline").textContent = subline(lastWx);
-    });
-  }
-
   /* ====================================================================
      BOOT
      ==================================================================== */
@@ -2130,7 +2091,7 @@
     else setTimeout(fn, 320);
   }
   afterPaint(function () {
-    loadWeather(); loadGitHub(); loadHN(); loadDevTo(); loadMarkets(); loadOnThisDay();
+    loadWeather(); loadGitHub(); loadHN(); loadDevTo(); loadMarkets();
   });
 
   if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {

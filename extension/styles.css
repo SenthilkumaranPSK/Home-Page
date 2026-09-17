@@ -153,12 +153,6 @@ body.ready .greeting .ch {
 
 body.no-anim .greeting .ch { animation: none; }
 
-.subline {
-  margin: .55rem 0 0;
-  color: var(--muted);
-  font-size: 1rem;
-}
-
 .streak {
   margin-top: .7rem;
   display: inline-flex;

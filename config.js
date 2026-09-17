@@ -38,7 +38,6 @@ const CONFIG = {
   feeds: {
     hackernews: true,              // front page, refreshed every 20 min
     devto:      true,              // dev.to's own front page, refreshed every 20 min
-    onThisDay:  true,               // a Wikipedia "on this day" fact, folded into the subline
   },
 
   /* ---- Search suggestions -----------------------------------------------
@@ -83,23 +82,6 @@ const CONFIG = {
     { day: 5, from: 17, to: 23, text: "Friday night"       },
     { day: 6, from: 8,  to: 20, text: "Saturday"           },
     { day: 0, from: 8,  to: 20, text: "Sunday reset"       },
-  ],
-
-  /* ---- Rotating subline ------------------------------------------------
-     A different one each open. Weather and streaks can override these.   */
-  sublines: [
-    "What are we building today?",
-    "Ship something small.",
-    "One thing at a time.",
-    "Momentum beats motivation.",
-    "Make it work, then make it fast.",
-    "Read the error message.",
-    "Commit early, commit often.",
-    "The best portfolio is a finished project.",
-    "Focus is a choice you make repeatedly.",
-    "Done is better than perfect.",
-    "Delete more code than you write.",
-    "Slow is smooth, smooth is fast.",
   ],
 
   /* ---- Search engines --------------------------------------------------
