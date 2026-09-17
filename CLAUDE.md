@@ -38,16 +38,23 @@ sync.bat           # Windows cmd (thin wrapper around sync.ps1)
 ./sync.sh --check  # report drift, change nothing — exit 1 if stale (both platforms)
 ```
 `sync.sh` regenerates `extension/newtab.html` from `index.html` (stripping PWA-only tags and
-flipping `data-page="web"` → `data-page="ext"`), copies the other shell files verbatim, and
-rewrites `sw.js`'s `CACHE` constant to a hash of the shell files' content (line endings stripped
-first, so a CRLF checkout doesn't spuriously bump it — see `.gitattributes`). After syncing, reload
-the unpacked extension at `chrome://extensions`. `.githooks/pre-commit` runs `sync.sh --check` and
-blocks the commit if it's stale; opt in once with `git config core.hooksPath .githooks`.
+flipping `data-page="web"` → `data-page="ext"`), copies `styles.css`/`app.js`/`config.js`/
+`cosmos.js`/`live.js` plus `assets/favicon.svg` verbatim, and rewrites `sw.js`'s `CACHE` constant
+to a hash of the shell files' content (line endings stripped first, so a CRLF checkout doesn't
+spuriously bump it — see `.gitattributes`). Note `manifest.webmanifest` is *hashed* but not copied
+— it's PWA-only, so editing it bumps the SW cache without changing `extension/`. After syncing,
+reload the unpacked extension at `chrome://extensions`. `.githooks/pre-commit` runs
+`sync.sh --check` and blocks the commit if it's stale; opt in once with
+`git config core.hooksPath .githooks`. `sync.sh` and `sync.ps1` are independent reimplementations
+of the same contract — a change to `SHELL_FILES`, the newtab transform, or the hash scheme must be
+made in **both**, or Windows and POSIX contributors will compute different cache names.
 
 **Deploy**: Vercel, no CLI needed — drag-and-drop the folder at vercel.com/new, or `vercel --prod`.
 `vercel.json` sets cache headers, `noindex`/`nosniff`/no-referrer headers, and a
 Content-Security-Policy scoped to `'self'` plus every external origin `live.js` calls directly
-(Open-Meteo, GitHub, HN/Algolia, CoinGecko, Frankfurter, Wikipedia); there is no build command
+(Open-Meteo, GitHub, HN/Algolia, dev.to, CoinGecko, Binance, Frankfurter, Wikipedia — note Binance
+is there only for `markets()`'s fallback path, so an incomplete `connect-src` fails silently until
+CoinGecko rate-limits); there is no build command
 configured (answer "Other" if Vercel asks). Adding a new external origin anywhere in the code
 requires adding it to `connect-src` in `vercel.json` too, or the request will be blocked on the
 deployed site (not locally, since CSP is a response header Vercel adds). `api/suggest.js` needs no
@@ -124,7 +131,13 @@ config.js  →  cosmos.js  →  live.js  →  app.js
   update toast (listens for `controllerchange`, skipping the first-ever activation on a fresh load),
   and the per-card render functions (`loadWeather`, `loadGitHub`, `loadHN`, `loadDevTo`,
   `loadMarkets`, `loadOnThisDay`) that call into `Live` and paint the DOM. `Cosmos.setPalette`-style
-  syncing happens via `syncPalette(hour)`.
+  syncing happens via `syncPalette(hour)`, which pushes `Cosmos`'s current band into the `--bg`/
+  `--accent` CSS variables and the `theme-color` meta tag, and returns the palette so the clock tick
+  can re-tint the greeting (`recolorGreeting()`/`letterColor()` — the greeting is rendered one
+  `<span>` per letter precisely so its gradient can follow the sky). Also here and undocumented
+  elsewhere: the pointer-driven tile tilt/spotlight, the pure-`CONFIG` countdown card, and
+  `drawWxChart()`, which builds the weather sparkline as inline SVG via `svgEl()` — not canvas, and
+  not an image.
 
 Reading order for a non-trivial UI change: `config.js` (what data exists) → the relevant section of
 `app.js` (how it's rendered/wired) → `styles.css` (how it looks) → `cosmos.js`/`live.js` only if
@@ -140,7 +153,9 @@ touching the background or a live-data card.
   error state.
 - **Motion must be gateable.** Any new animation/particle effect should check the relevant
   `CONFIG.options` flag and bail out when `prefers-reduced-motion` is set (see the `REDUCED` check
-  near the top of `app.js` and the equivalent in `cosmos.js`).
+  near the top of `app.js` and the equivalent in `cosmos.js`). Pointer-driven effects (tile tilt,
+  cursor spotlight) additionally gate on `NARROW` (`max-width: 760px`) — a hover effect on a
+  touch device is dead weight at best and sticky at worst.
 - **`extension/` is a build artifact of `sync.sh`, not hand-edited.** Never edit files under
   `extension/` directly except `manifest.json` and the `icons/` set — everything else gets
   overwritten by the next sync.
